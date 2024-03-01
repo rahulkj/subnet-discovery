@@ -1,4 +1,4 @@
-module subnet-planner
+module subnet-discovery
 
 go 1.21
 

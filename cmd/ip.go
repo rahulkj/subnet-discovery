@@ -6,12 +6,20 @@ import (
 	"log"
 	"net"
 	"net/netip"
+	"sort"
+	"sync"
+	"time"
 )
+
+type IPStatus struct {
+	IP       string
+	Pingable bool
+}
 
 func ValidateIFInputIsReachableOrNot(input string) {
 	if checkIfInputIsIP(input) {
 		ip := net.ParseIP(input).String()
-		pingable := checkIfIPIsPingable(ip)
+		pingable := checkIfIPIsAvailable(ip)
 		printTableHeader()
 		printTable(ip, pingable)
 	} else if checkIfInputIsCIDR(input) {
@@ -33,11 +41,39 @@ func expandCIDRAndLogIPStatus(subnet string) {
 
 	log.Printf("Subnet length: %d\n", len(ips))
 
+	wg := new(sync.WaitGroup)
+	wg.Add(len(ips))
+
+	results := make(chan IPStatus)
+
 	printTableHeader()
 	for _, ip := range ips {
-		pingable := checkIfIPIsPingable(ip)
-		printTable(ip, pingable)
+		go func(ip string) {
+			defer wg.Done()
+			checkIfIPIsPingable(ip, results)
+		}(ip)
 	}
+
+	var unusedIPs []string
+	var usedIPs []string
+
+	for i := 0; i < len(ips); i++ {
+		res := <-results
+		if res.Pingable {
+			usedIPs = append(usedIPs, res.IP)
+		} else {
+			unusedIPs = append(unusedIPs, res.IP)
+		}
+		printTable(res.IP, res.Pingable)
+	}
+
+	sort.Strings(usedIPs)
+	sort.Strings(unusedIPs)
+
+	fmt.Println("USED IPS:", len(usedIPs))
+	fmt.Println("UNUSED IPS:", len(unusedIPs))
+
+	wg.Wait()
 }
 
 func inc(ip net.IP) {
@@ -49,14 +85,21 @@ func inc(ip net.IP) {
 	}
 }
 
-func checkIfIPIsPingable(ip string) bool {
+func checkIfIPIsPingable(ip string, results chan IPStatus) {
+	pingable := checkIfIPIsAvailable(ip)
+	ipstatus := IPStatus{Pingable: pingable, IP: ip}
+	results <- ipstatus
+}
+
+func checkIfIPIsAvailable(ip string) bool {
 	var pingable bool
 	pinger, err := probing.NewPinger(ip)
 	if err != nil {
 		panic(err)
 	}
 
-	pinger.Timeout = 500000000
+	pinger.Timeout = time.Second
+	pinger.Count = 3
 
 	pinger.OnFinish = func(stats *probing.Statistics) {
 		if stats.PacketsRecv > 0 {

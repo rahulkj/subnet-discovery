@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"subnet-planner/cmd"
+	"subnet-discovery/cmd"
 )
 
 func main() {
