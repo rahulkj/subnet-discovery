@@ -2,13 +2,14 @@ package cmd
 
 import (
 	"fmt"
-	probing "github.com/prometheus-community/pro-bing"
 	"log"
 	"net"
 	"net/netip"
 	"sort"
 	"sync"
 	"time"
+
+	probing "github.com/prometheus-community/pro-bing"
 )
 
 type IPStatus struct {
@@ -58,34 +59,18 @@ func expandCIDRAndLogIPStatus(subnet string, ipsToProcessInABatch int) {
 	completedLoops := 0
 	startIndex, endIndex := getNextIndex(numberOfLoops, completedLoops, 0, 0, currentLen, ipsToProcessInABatch)
 
-	for i := 0; i <= numberOfLoops; i++ {
+	if numberOfLoops == 0 {
 		newArray := ips[startIndex:endIndex]
+		usedIPs, unusedIPs = processRequest(newArray, usedIPs, unusedIPs)
+	} else {
+		for i := 0; i < numberOfLoops; i++ {
+			newArray := ips[startIndex:endIndex]
 
-		wg := new(sync.WaitGroup)
-		results := make(chan IPStatus)
+			usedIPs, unusedIPs = processRequest(newArray, usedIPs, unusedIPs)
 
-		for _, ip := range newArray {
-			wg.Add(1)
-			go func(ip string) {
-				defer wg.Done()
-				checkIfIPIsPingable(ip, results)
-			}(ip)
+			completedLoops = i + 1
+			startIndex, endIndex = getNextIndex(numberOfLoops, completedLoops, startIndex, endIndex, currentLen, ipsToProcessInABatch)
 		}
-
-		for i := 0; i < len(newArray); i++ {
-			res := <-results
-			if res.Pingable {
-				usedIPs = append(usedIPs, res.IP)
-			} else {
-				unusedIPs = append(unusedIPs, res.IP)
-			}
-			printTable(res.IP, res.Pingable)
-		}
-
-		wg.Wait()
-
-		completedLoops = i + 1
-		startIndex, endIndex = getNextIndex(numberOfLoops, completedLoops, startIndex, endIndex, currentLen, ipsToProcessInABatch)
 	}
 
 	sort.Strings(usedIPs)
@@ -97,15 +82,42 @@ func expandCIDRAndLogIPStatus(subnet string, ipsToProcessInABatch int) {
 
 }
 
+func processRequest(newArray []string, usedIPs []string, unusedIPs []string) ([]string, []string) {
+	wg := new(sync.WaitGroup)
+	results := make(chan IPStatus)
+
+	for _, ip := range newArray {
+		wg.Add(1)
+		go func(ip string) {
+			defer wg.Done()
+			checkIfIPIsPingable(ip, results)
+		}(ip)
+	}
+
+	for i := 0; i < len(newArray); i++ {
+		res := <-results
+		if res.Pingable {
+			usedIPs = append(usedIPs, res.IP)
+		} else {
+			unusedIPs = append(unusedIPs, res.IP)
+		}
+		printTable(res.IP, res.Pingable)
+	}
+
+	wg.Wait()
+
+	return usedIPs, unusedIPs
+}
+
 func getNextIndex(numberOfLoops int, completedLoops int, startIndex int, endIndex int, currentLen int, ipsToProcessInABatch int) (int, int) {
 	if currentLen < ipsToProcessInABatch || (numberOfLoops-completedLoops) == 0 {
 		startIndex = 0
 		endIndex = currentLen
 	} else if (numberOfLoops - completedLoops) >= 1 {
-		startIndex = endIndex + 1
+		startIndex = endIndex
 		endIndex = endIndex + ipsToProcessInABatch
 	} else if numberOfLoops == completedLoops {
-		startIndex = endIndex + 1
+		startIndex = endIndex
 		endIndex = currentLen
 	}
 
@@ -135,10 +147,10 @@ func checkIfIPIsAvailable(ip string) bool {
 	}
 
 	pinger.Timeout = time.Second
-	pinger.Count = 3
+	pinger.Count = 6
 
 	pinger.OnFinish = func(stats *probing.Statistics) {
-		if stats.PacketsRecv > 0 {
+		if stats.PacketsRecv > 0 && stats.PacketsSent == stats.PacketsRecv {
 			pingable = true
 		}
 	}
@@ -153,10 +165,10 @@ func checkIfIPIsAvailable(ip string) bool {
 
 func checkIfInputIsIP(input string) bool {
 	_, err := netip.ParseAddr(input)
-	if err != nil {
-		return false
+	if err == nil {
+		return true
 	}
-	return true
+	return false
 }
 
 func checkIfInputIsCIDR(input string) bool {
