@@ -1,4 +1,4 @@
-version: 1
+version: 2
 
 before:
   hooks:
@@ -30,7 +30,6 @@ archives:
   - format: tar.gz
     files:
       - dist/*.sig
-    strip_parent_binary_folder: true
     # use zip for windows archives
     format_overrides:
       - goos: windows
