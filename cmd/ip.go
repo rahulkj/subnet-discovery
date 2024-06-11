@@ -113,12 +113,12 @@ func getNextIndex(numberOfLoops int, completedLoops int, startIndex int, endInde
 	if currentLen < ipsToProcessInABatch || (numberOfLoops-completedLoops) == 0 {
 		startIndex = 0
 		endIndex = currentLen
-	} else if (numberOfLoops - completedLoops) >= 1 {
-		startIndex = endIndex
-		endIndex = endIndex + ipsToProcessInABatch
 	} else if numberOfLoops == completedLoops {
 		startIndex = endIndex
 		endIndex = currentLen
+	} else if (numberOfLoops - completedLoops) >= 1 {
+		startIndex = endIndex
+		endIndex = endIndex + ipsToProcessInABatch
 	}
 
 	return startIndex, endIndex
