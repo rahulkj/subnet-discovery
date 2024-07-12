@@ -19,19 +19,19 @@ type IPStatus struct {
 	Pingable bool
 }
 
-func ValidateIFInputIsReachableOrNot(input string, ipsToProcessInABatch int, retry int) {
-	if checkIfInputIsIP(input) {
-		ip := net.ParseIP(input).String()
-		pingable := checkIfIPIsAvailable(ip, retry)
+func ValidateIFInputIsReachableOrNot(userInput UserInput) {
+	if checkIfInputIsIP(userInput.IPAddr) {
+		ip := net.ParseIP(userInput.IPAddr).String()
+		pingable := checkIfIPIsAvailable(ip, userInput)
 		printTableHeader()
 		printTable(ip, pingable)
-	} else if checkIfInputIsCIDR(input) {
-		expandCIDRAndLogIPStatus(input, ipsToProcessInABatch, retry)
+	} else if checkIfInputIsCIDR(userInput.IPAddr) {
+		expandCIDRAndLogIPStatus(userInput)
 	}
 }
 
-func expandCIDRAndLogIPStatus(subnet string, ipsToProcessInABatch int, retry int) {
-	ipAddr, ipNet, err := net.ParseCIDR(subnet)
+func expandCIDRAndLogIPStatus(userInput UserInput) {
+	ipAddr, ipNet, err := net.ParseCIDR(userInput.IPAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -54,24 +54,24 @@ func expandCIDRAndLogIPStatus(subnet string, ipsToProcessInABatch int, retry int
 	bar := progressbar.Default(int64(len(ips)), "IP Ping Status >>>")
 
 	var numberOfLoops int
-	if currentLen > ipsToProcessInABatch {
-		numberOfLoops = currentLen / ipsToProcessInABatch
+	if currentLen > userInput.BatchSize {
+		numberOfLoops = currentLen / userInput.BatchSize
 	}
 
 	completedLoops := 0
-	startIndex, endIndex := getNextIndex(numberOfLoops, completedLoops, 0, 0, currentLen, ipsToProcessInABatch)
+	startIndex, endIndex := getNextIndex(numberOfLoops, completedLoops, 0, 0, currentLen, userInput.BatchSize)
 
 	if numberOfLoops == 0 {
 		newArray := ips[startIndex:endIndex]
-		usedIPs, unusedIPs = processRequest(newArray, usedIPs, unusedIPs, bar, retry)
+		usedIPs, unusedIPs = processRequest(newArray, usedIPs, unusedIPs, bar, userInput)
 	} else {
 		for i := 0; i < numberOfLoops; i++ {
 			newArray := ips[startIndex:endIndex]
 
-			usedIPs, unusedIPs = processRequest(newArray, usedIPs, unusedIPs, bar, retry)
+			usedIPs, unusedIPs = processRequest(newArray, usedIPs, unusedIPs, bar, userInput)
 
 			completedLoops = i + 1
-			startIndex, endIndex = getNextIndex(numberOfLoops, completedLoops, startIndex, endIndex, currentLen, ipsToProcessInABatch)
+			startIndex, endIndex = getNextIndex(numberOfLoops, completedLoops, startIndex, endIndex, currentLen, userInput.BatchSize)
 		}
 	}
 
@@ -89,12 +89,16 @@ func expandCIDRAndLogIPStatus(subnet string, ipsToProcessInABatch int, retry int
 	sort.Strings(usedIPArray)
 	sort.Strings(unUsedIPArray)
 
-	printSeparater("UnAvailable IPs")
+	fmt.Println()
+
+	printSeparater("Unavailable IPs")
 	printTableHeader()
 
 	for _, usedIP := range usedIPArray {
 		printTable(usedIP, true)
 	}
+
+	fmt.Println()
 
 	printSeparater("Available IPs")
 	printTableHeader()
@@ -109,7 +113,7 @@ func expandCIDRAndLogIPStatus(subnet string, ipsToProcessInABatch int, retry int
 	fmt.Println("UNUSED IPS:", len(unUsedIPArray))
 }
 
-func processRequest(newArray []string, usedIPs []IPStatus, unusedIPs []IPStatus, bar *progressbar.ProgressBar, retry int) ([]IPStatus, []IPStatus) {
+func processRequest(newArray []string, usedIPs []IPStatus, unusedIPs []IPStatus, bar *progressbar.ProgressBar, userInput UserInput) ([]IPStatus, []IPStatus) {
 	wg := new(sync.WaitGroup)
 	results := make(chan IPStatus)
 
@@ -117,7 +121,7 @@ func processRequest(newArray []string, usedIPs []IPStatus, unusedIPs []IPStatus,
 		wg.Add(1)
 		go func(ip string) {
 			defer wg.Done()
-			checkIfIPIsPingable(ip, results, retry)
+			checkIfIPIsPingable(ip, results, userInput)
 		}(ip)
 	}
 
@@ -160,23 +164,23 @@ func inc(ip net.IP) {
 	}
 }
 
-func checkIfIPIsPingable(ip string, results chan IPStatus, retry int) {
-	pingable := checkIfIPIsAvailable(ip, retry)
+func checkIfIPIsPingable(ip string, results chan IPStatus, userInput UserInput) {
+	pingable := checkIfIPIsAvailable(ip, userInput)
 	ipstatus := IPStatus{Pingable: pingable, IP: ip}
 	results <- ipstatus
 }
 
-func checkIfIPIsAvailable(ip string, retry int) bool {
+func checkIfIPIsAvailable(ip string, userInput UserInput) bool {
 	var pingable bool
 
-	for i := 0; i < retry; i++ {
+	for i := 0; i < userInput.RetryCount; i++ {
 		pinger, err := probing.NewPinger(ip)
 		if err != nil {
 			panic(err)
 		}
 
 		pinger.Timeout = time.Second
-		pinger.Count = 10
+		pinger.Count = userInput.PingCount
 
 		err = pinger.Run()
 		if err != nil {
@@ -223,7 +227,7 @@ func printTableHeader() {
 
 func printTable(ip string, pingable bool) {
 	if pingable {
-		fmt.Printf("%s\t\t %s\n", ip, "Unvailable")
+		fmt.Printf("%s\t\t %s\n", ip, "Unavailable")
 	} else {
 		fmt.Printf("%s\t\t %s\n", ip, "Available")
 	}
