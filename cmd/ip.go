@@ -89,16 +89,12 @@ func expandCIDRAndLogIPStatus(userInput UserInput) {
 	sort.Strings(usedIPArray)
 	sort.Strings(unUsedIPArray)
 
-	fmt.Println()
-
 	printSeparater("Unavailable IPs")
 	printTableHeader()
 
 	for _, usedIP := range usedIPArray {
 		printTable(usedIP, true)
 	}
-
-	fmt.Println()
 
 	printSeparater("Available IPs")
 	printTableHeader()
@@ -107,10 +103,10 @@ func expandCIDRAndLogIPStatus(userInput UserInput) {
 		printTable(unUsedIP, false)
 	}
 
-	fmt.Println("\nSummary of the scan")
-	printSeparater("")
-	fmt.Println("USED IPS:", len(usedIPArray))
-	fmt.Println("UNUSED IPS:", len(unUsedIPArray))
+	printSeparater("Summary of the subnet scan")
+	fmt.Printf("TOTAL IPS: \t%d\n", currentLen)
+	fmt.Printf("AVAILABLE IPS: \t%d\n", len(unUsedIPArray))
+	fmt.Printf("UNAVAILABLE IPS: %d\n", len(usedIPArray))
 }
 
 func processRequest(newArray []string, usedIPs []IPStatus, unusedIPs []IPStatus, bar *progressbar.ProgressBar, userInput UserInput) ([]IPStatus, []IPStatus) {
@@ -217,7 +213,8 @@ func checkIfInputIsCIDR(input string) bool {
 }
 
 func printSeparater(header string) {
-	fmt.Printf("------------------%s------------------------\n", header)
+	fmt.Println()
+	fmt.Printf("****** %s ******\n", header)
 }
 
 func printTableHeader() {
