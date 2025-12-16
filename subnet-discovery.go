@@ -7,7 +7,14 @@ import (
 	"subnet-discovery/cmd"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
+	fmt.Printf("My App Version: %s, commit: %s, built at: %s\n", version, commit, date)
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "DESCRIPTION: \n")
