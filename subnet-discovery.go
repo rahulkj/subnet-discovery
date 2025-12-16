@@ -22,14 +22,15 @@ func main() {
 	count := flag.Int("c", 3, "Number of pings to send")
 	batchSize := flag.Int("n", 32, "Provide the number of IP's you would like to process in batches, ex: 4,6,8,16,32. Default is 32")
 	retryCount := flag.Int("r", 3, "Provide the retry count to check if the IP is up. Default is 3")
+	outputFormat := flag.String("o", "table", "Provide the output format. Supported output formats are 'table' and 'json'")
 	flag.Parse()
 
-	if len(*ipAddr) == 0 || *batchSize < 32 || *retryCount < 3 || *count > 3 {
+	if len(*ipAddr) == 0 || *batchSize < 32 || *retryCount < 3 || *count > 3 || (*outputFormat != "table" && *outputFormat != "json") {
 		flag.PrintDefaults()
 		return
 	}
 
-	userInput := cmd.UserInput{PingCount: *count, IPAddr: *ipAddr, BatchSize: *batchSize, RetryCount: *retryCount}
+	userInput := cmd.UserInput{PingCount: *count, IPAddr: *ipAddr, BatchSize: *batchSize, RetryCount: *retryCount, OutputFormat: *outputFormat}
 
-	cmd.ValidateIFInputIsReachableOrNot(userInput)
+	cmd.ProcessRequest(userInput)
 }

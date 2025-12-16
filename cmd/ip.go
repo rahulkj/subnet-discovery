@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -15,11 +16,11 @@ import (
 )
 
 type IPStatus struct {
-	IP       string
-	Pingable bool
+	IP       string `json:"ip"`
+	Pingable bool   `json:"pingable"`
 }
 
-func ValidateIFInputIsReachableOrNot(userInput UserInput) {
+func ProcessRequest(userInput UserInput) {
 	if checkIfInputIsIP(userInput.IPAddr) {
 		ip := net.ParseIP(userInput.IPAddr).String()
 		pingable := checkIfIPIsAvailable(ip, userInput)
@@ -89,6 +90,42 @@ func expandCIDRAndLogIPStatus(userInput UserInput) {
 	sort.Strings(usedIPArray)
 	sort.Strings(unUsedIPArray)
 
+	switch userInput.OutputFormat {
+	case "table":
+		printTableFormat(usedIPArray, unUsedIPArray, currentLen)
+	case "json":
+		printJsonFormat(usedIPs, unusedIPs, currentLen)
+	}
+
+}
+
+type IPResultsSummary struct {
+	TotalIPs       int        `json:"total_ips"`
+	AvailableIPs   int        `json:"available_ips"`
+	UnavailableIPs int        `json:"unavailable_ips"`
+	UsedIPs        []IPStatus `json:"used_ips"`
+	UnusedIPs      []IPStatus `json:"unused_ips"`
+}
+
+func printJsonFormat(usedIPs []IPStatus, unusedIPs []IPStatus, currentLen int) {
+	summary := IPResultsSummary{
+		TotalIPs:       currentLen,
+		AvailableIPs:   len(unusedIPs),
+		UnavailableIPs: len(usedIPs),
+		UsedIPs:        usedIPs,
+		UnusedIPs:      unusedIPs,
+	}
+
+	jsonData, err := json.MarshalIndent(summary, "", "  ")
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(string(jsonData))
+}
+
+func printTableFormat(usedIPArray []string, unUsedIPArray []string, currentLen int) {
 	printSeparater("Unavailable IPs")
 	printTableHeader()
 
