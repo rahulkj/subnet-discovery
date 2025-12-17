@@ -6,7 +6,7 @@ name: Go
 on:
   push:
     branches:
-      - master
+      - main
     tags:
       - 'v*'
 
