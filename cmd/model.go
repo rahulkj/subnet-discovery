@@ -1,9 +1,9 @@
 package cmd
 
 type UserInput struct {
-	PingCount    int
-	IPAddr       string
-	BatchSize    int
-	RetryCount   int
-	OutputFormat string
+	PingCount      int
+	IPAddr         string
+	MaxConcurrency int
+	RetryCount     int
+	OutputFormat   string
 }

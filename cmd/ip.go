@@ -22,7 +22,7 @@ type IPStatus struct {
 
 func ProcessRequest(userInput UserInput) {
 	if checkIfInputIsIP(userInput.IPAddr) {
-		ip := net.ParseIP(userInput.IPAddr).String()
+		ip := userInput.IPAddr
 		pingable := checkIfIPIsAvailable(ip, userInput)
 		printTableHeader()
 		printTable(ip, pingable)
@@ -38,65 +38,57 @@ func expandCIDRAndLogIPStatus(userInput UserInput) {
 	}
 
 	var ips []string
-
 	for ip := ipAddr.Mask(ipNet.Mask); ipNet.Contains(ip); inc(ip) {
 		ips = append(ips, ip.String())
 	}
 
-	log.Printf("Subnet length: %d\n", len(ips))
+	totalIPs := len(ips)
+	log.Printf("Subnet length: %d\n", totalIPs)
 
-	// placeholders for used and unused IP's
-	var usedIPs []IPStatus
-	var unusedIPs []IPStatus
+	bar := progressbar.Default(int64(totalIPs), "IP Ping Status >>>")
 
-	// Get the current length of the array
-	currentLen := len(ips)
+	usedIPs, unusedIPs := processAllIPs(ips, bar, userInput)
 
-	bar := progressbar.Default(int64(len(ips)), "IP Ping Status >>>")
-
-	var numberOfLoops int
-	if currentLen > userInput.BatchSize {
-		numberOfLoops = currentLen / userInput.BatchSize
-	}
-
-	completedLoops := 0
-	startIndex, endIndex := getNextIndex(numberOfLoops, completedLoops, 0, 0, currentLen, userInput.BatchSize)
-
-	if numberOfLoops == 0 {
-		newArray := ips[startIndex:endIndex]
-		usedIPs, unusedIPs = processRequest(newArray, usedIPs, unusedIPs, bar, userInput)
-	} else {
-		for i := 0; i < numberOfLoops; i++ {
-			newArray := ips[startIndex:endIndex]
-
-			usedIPs, unusedIPs = processRequest(newArray, usedIPs, unusedIPs, bar, userInput)
-
-			completedLoops = i + 1
-			startIndex, endIndex = getNextIndex(numberOfLoops, completedLoops, startIndex, endIndex, currentLen, userInput.BatchSize)
-		}
-	}
+	bar.Finish()
+	fmt.Println()
 
 	var usedIPArray []string
 	var unUsedIPArray []string
 
-	for _, usedIPResponse := range usedIPs {
-		usedIPArray = append(usedIPArray, usedIPResponse.IP)
+	for _, ipStatus := range usedIPs {
+		usedIPArray = append(usedIPArray, ipStatus.IP)
+	}
+	for _, ipStatus := range unusedIPs {
+		unUsedIPArray = append(unUsedIPArray, ipStatus.IP)
 	}
 
-	for _, unUsedIPResponse := range unusedIPs {
-		unUsedIPArray = append(unUsedIPArray, unUsedIPResponse.IP)
-	}
-
-	sort.Strings(usedIPArray)
-	sort.Strings(unUsedIPArray)
+	sort.Slice(usedIPArray, func(i, j int) bool {
+		a, _ := netip.ParseAddr(usedIPArray[i])
+		b, _ := netip.ParseAddr(usedIPArray[j])
+		return a.Less(b)
+	})
+	sort.Slice(unUsedIPArray, func(i, j int) bool {
+		a, _ := netip.ParseAddr(unUsedIPArray[i])
+		b, _ := netip.ParseAddr(unUsedIPArray[j])
+		return a.Less(b)
+	})
 
 	switch userInput.OutputFormat {
 	case "table":
-		printTableFormat(usedIPArray, unUsedIPArray, currentLen)
+		printTableFormat(usedIPArray, unUsedIPArray, totalIPs)
 	case "json":
-		printJsonFormat(usedIPs, unusedIPs, currentLen)
+		sort.Slice(usedIPs, func(i, j int) bool {
+			a, _ := netip.ParseAddr(usedIPs[i].IP)
+			b, _ := netip.ParseAddr(usedIPs[j].IP)
+			return a.Less(b)
+		})
+		sort.Slice(unusedIPs, func(i, j int) bool {
+			a, _ := netip.ParseAddr(unusedIPs[i].IP)
+			b, _ := netip.ParseAddr(unusedIPs[j].IP)
+			return a.Less(b)
+		})
+		printJSONFormat(usedIPs, unusedIPs, totalIPs)
 	}
-
 }
 
 type IPResultsSummary struct {
@@ -107,9 +99,9 @@ type IPResultsSummary struct {
 	UnusedIPs      []IPStatus `json:"unused_ips"`
 }
 
-func printJsonFormat(usedIPs []IPStatus, unusedIPs []IPStatus, currentLen int) {
+func printJSONFormat(usedIPs []IPStatus, unusedIPs []IPStatus, totalIPs int) {
 	summary := IPResultsSummary{
-		TotalIPs:       currentLen,
+		TotalIPs:       totalIPs,
 		AvailableIPs:   len(unusedIPs),
 		UnavailableIPs: len(usedIPs),
 		UsedIPs:        usedIPs,
@@ -117,7 +109,6 @@ func printJsonFormat(usedIPs []IPStatus, unusedIPs []IPStatus, currentLen int) {
 	}
 
 	jsonData, err := json.MarshalIndent(summary, "", "  ")
-
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -125,67 +116,63 @@ func printJsonFormat(usedIPs []IPStatus, unusedIPs []IPStatus, currentLen int) {
 	fmt.Println(string(jsonData))
 }
 
-func printTableFormat(usedIPArray []string, unUsedIPArray []string, currentLen int) {
-	printSeparater("Unavailable IPs")
+func printTableFormat(usedIPArray []string, unUsedIPArray []string, totalIPs int) {
+	printSeparator("Unavailable IPs")
 	printTableHeader()
 
-	for _, usedIP := range usedIPArray {
-		printTable(usedIP, true)
+	for _, ip := range usedIPArray {
+		printTable(ip, true)
 	}
 
-	printSeparater("Available IPs")
+	printSeparator("Available IPs")
 	printTableHeader()
 
-	for _, unUsedIP := range unUsedIPArray {
-		printTable(unUsedIP, false)
+	for _, ip := range unUsedIPArray {
+		printTable(ip, false)
 	}
 
-	printSeparater("Summary of the subnet scan")
-	fmt.Printf("TOTAL IPS: \t%d\n", currentLen)
+	printSeparator("Summary of the subnet scan")
+	fmt.Printf("TOTAL IPS: \t%d\n", totalIPs)
 	fmt.Printf("AVAILABLE IPS: \t%d\n", len(unUsedIPArray))
 	fmt.Printf("UNAVAILABLE IPS: %d\n", len(usedIPArray))
 }
 
-func processRequest(newArray []string, usedIPs []IPStatus, unusedIPs []IPStatus, bar *progressbar.ProgressBar, userInput UserInput) ([]IPStatus, []IPStatus) {
-	wg := new(sync.WaitGroup)
-	results := make(chan IPStatus)
-
-	for _, ip := range newArray {
-		wg.Add(1)
-		go func(ip string) {
-			defer wg.Done()
-			checkIfIPIsPingable(ip, results, userInput)
-		}(ip)
+func processAllIPs(ips []string, bar *progressbar.ProgressBar, userInput UserInput) ([]IPStatus, []IPStatus) {
+	concurrency := userInput.MaxConcurrency
+	if concurrency <= 0 {
+		concurrency = 32
+	}
+	if concurrency > len(ips) {
+		concurrency = len(ips)
 	}
 
-	for i := 0; i < len(newArray); i++ {
-		res := <-results
-		if res.Pingable {
-			usedIPs = append(usedIPs, res)
-		} else {
-			unusedIPs = append(unusedIPs, res)
-		}
-		bar.Add(1)
+	sem := make(chan struct{}, concurrency)
+	var mu sync.Mutex
+	var usedIPs []IPStatus
+	var unusedIPs []IPStatus
+	var wg sync.WaitGroup
+
+	for _, ip := range ips {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(ip string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			pingable := checkIfIPIsAvailable(ip, userInput)
+			mu.Lock()
+			if pingable {
+				usedIPs = append(usedIPs, IPStatus{Pingable: true, IP: ip})
+			} else {
+				unusedIPs = append(unusedIPs, IPStatus{Pingable: false, IP: ip})
+			}
+			mu.Unlock()
+			bar.Add(1)
+		}(ip)
 	}
 
 	wg.Wait()
 
 	return usedIPs, unusedIPs
-}
-
-func getNextIndex(numberOfLoops int, completedLoops int, startIndex int, endIndex int, currentLen int, ipsToProcessInABatch int) (int, int) {
-	if currentLen < ipsToProcessInABatch || (numberOfLoops-completedLoops) == 0 {
-		startIndex = 0
-		endIndex = currentLen
-	} else if numberOfLoops == completedLoops {
-		startIndex = endIndex
-		endIndex = currentLen
-	} else if (numberOfLoops - completedLoops) >= 1 {
-		startIndex = endIndex
-		endIndex = endIndex + ipsToProcessInABatch
-	}
-
-	return startIndex, endIndex
 }
 
 func inc(ip net.IP) {
@@ -197,19 +184,12 @@ func inc(ip net.IP) {
 	}
 }
 
-func checkIfIPIsPingable(ip string, results chan IPStatus, userInput UserInput) {
-	pingable := checkIfIPIsAvailable(ip, userInput)
-	ipstatus := IPStatus{Pingable: pingable, IP: ip}
-	results <- ipstatus
-}
-
 func checkIfIPIsAvailable(ip string, userInput UserInput) bool {
-	var pingable bool
-
 	for i := 0; i < userInput.RetryCount; i++ {
 		pinger, err := probing.NewPinger(ip)
 		if err != nil {
-			panic(err)
+			log.Printf("Error creating pinger for %s: %v\n", ip, err)
+			return false
 		}
 
 		pinger.Timeout = time.Second
@@ -217,21 +197,17 @@ func checkIfIPIsAvailable(ip string, userInput UserInput) bool {
 
 		err = pinger.Run()
 		if err != nil {
-			panic(err)
+			log.Printf("Error running pinger for %s: %v\n", ip, err)
+			return false
 		}
 
 		stats := pinger.Statistics()
-
 		if stats.PacketsRecv != 0 && stats.PacketsRecv <= stats.PacketsSent {
-			pingable = true
-		}
-
-		if pingable {
-			break
+			return true
 		}
 	}
 
-	return pingable
+	return false
 }
 
 func checkIfInputIsIP(input string) bool {
@@ -245,11 +221,10 @@ func checkIfInputIsCIDR(input string) bool {
 		log.Println(err)
 		return false
 	}
-
 	return true
 }
 
-func printSeparater(header string) {
+func printSeparator(header string) {
 	fmt.Println()
 	fmt.Printf("****** %s ******\n", header)
 }

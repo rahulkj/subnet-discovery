@@ -1,6 +1,6 @@
 #!/bin/bash
 
-go mod edit -go=1.25.5
+go mod edit -go=1.26
 go get -u
 go mod tidy
 
