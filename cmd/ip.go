@@ -7,7 +7,9 @@ import (
 	"net"
 	"net/netip"
 	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	probing "github.com/prometheus-community/pro-bing"
@@ -23,7 +25,7 @@ type IPStatus struct {
 func ProcessRequest(userInput UserInput) {
 	if checkIfInputIsIP(userInput.IPAddr) {
 		ip := userInput.IPAddr
-		pingable := checkIfIPIsAvailable(ip, userInput)
+		pingable, _ := checkIfIPIsAvailable(ip, userInput)
 		printTableHeader()
 		printTable(ip, pingable)
 	} else if checkIfInputIsCIDR(userInput.IPAddr) {
@@ -138,36 +140,71 @@ func printTableFormat(usedIPArray []string, unUsedIPArray []string, totalIPs int
 }
 
 func processAllIPs(ips []string, bar *progressbar.ProgressBar, userInput UserInput) ([]IPStatus, []IPStatus) {
-	concurrency := userInput.MaxConcurrency
-	if concurrency <= 0 {
-		concurrency = 32
+	maxConcurrency := userInput.MaxConcurrency
+	if maxConcurrency <= 0 {
+		maxConcurrency = 32
 	}
-	if concurrency > len(ips) {
-		concurrency = len(ips)
+	maxConcurrency, _ = ClampConcurrency(maxConcurrency)
+	if maxConcurrency > len(ips) {
+		maxConcurrency = len(ips)
 	}
 
-	sem := make(chan struct{}, concurrency)
-	var mu sync.Mutex
 	var usedIPs []IPStatus
 	var unusedIPs []IPStatus
+	var mu sync.Mutex
 	var wg sync.WaitGroup
 
+	sem := make(chan struct{}, maxConcurrency)
+	var currentMax atomic.Int64
+	currentMax.Store(int64(maxConcurrency))
+
+	ipChan := make(chan string, len(ips))
 	for _, ip := range ips {
+		ipChan <- ip
+	}
+	close(ipChan)
+
+	for range maxConcurrency {
 		wg.Add(1)
-		sem <- struct{}{}
-		go func(ip string) {
+		go func() {
 			defer wg.Done()
-			defer func() { <-sem }()
-			pingable := checkIfIPIsAvailable(ip, userInput)
-			mu.Lock()
-			if pingable {
-				usedIPs = append(usedIPs, IPStatus{Pingable: true, IP: ip})
-			} else {
-				unusedIPs = append(unusedIPs, IPStatus{Pingable: false, IP: ip})
+			for ip := range ipChan {
+				sem <- struct{}{}
+				pingable, err := checkIfIPIsAvailable(ip, userInput)
+				if err != nil && strings.Contains(err.Error(), "no buffer space available") {
+					cur := currentMax.Load()
+					if cur > 1 {
+						newMax := cur / 2
+						if newMax < 1 {
+							newMax = 1
+						}
+						if currentMax.CompareAndSwap(cur, newMax) {
+							log.Printf("No buffer space available, reducing concurrency from %d to %d", cur, newMax)
+							// Drain excess semaphore slots
+							for range cur - newMax {
+								select {
+								case <-sem:
+								default:
+								}
+							}
+						}
+					}
+					<-sem
+					ipChan <- ip
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
+				mu.Lock()
+				if pingable {
+					usedIPs = append(usedIPs, IPStatus{Pingable: true, IP: ip})
+				} else {
+					unusedIPs = append(unusedIPs, IPStatus{Pingable: false, IP: ip})
+				}
+				mu.Unlock()
+				bar.Add(1)
+				<-sem
 			}
-			mu.Unlock()
-			bar.Add(1)
-		}(ip)
+		}()
 	}
 
 	wg.Wait()
@@ -184,12 +221,12 @@ func inc(ip net.IP) {
 	}
 }
 
-func checkIfIPIsAvailable(ip string, userInput UserInput) bool {
+func checkIfIPIsAvailable(ip string, userInput UserInput) (bool, error) {
 	for i := 0; i < userInput.RetryCount; i++ {
 		pinger, err := probing.NewPinger(ip)
 		if err != nil {
 			log.Printf("Error creating pinger for %s: %v\n", ip, err)
-			return false
+			return false, nil
 		}
 
 		pinger.Timeout = time.Second
@@ -197,17 +234,20 @@ func checkIfIPIsAvailable(ip string, userInput UserInput) bool {
 
 		err = pinger.Run()
 		if err != nil {
+			if strings.Contains(err.Error(), "no buffer space available") {
+				return false, err
+			}
 			log.Printf("Error running pinger for %s: %v\n", ip, err)
-			return false
+			return false, nil
 		}
 
 		stats := pinger.Statistics()
 		if stats.PacketsRecv != 0 && stats.PacketsRecv <= stats.PacketsSent {
-			return true
+			return true, nil
 		}
 	}
 
-	return false
+	return false, nil
 }
 
 func checkIfInputIsIP(input string) bool {
