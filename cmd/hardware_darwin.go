@@ -5,7 +5,7 @@ import (
 	"syscall"
 )
 
-func detectDarwinMemory() uint64 {
+func detectAvailableMemory() uint64 {
 	val, err := syscall.Sysctl("hw.memsize")
 	if err != nil {
 		log.Printf("Warning: could not get hw.memsize: %v, using conservative default\n", err)
@@ -19,4 +19,18 @@ func detectDarwinMemory() uint64 {
 		uint64(b[4])<<32 | uint64(b[5])<<40 | uint64(b[6])<<48 | uint64(b[7])<<56
 
 	return physMem * 60 / 100
+}
+
+func detectMaxFileDescriptors() uint64 {
+	var rLimit syscall.Rlimit
+	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	if err != nil {
+		log.Printf("Warning: could not get RLIMIT_NOFILE: %v, using conservative default\n", err)
+		return 1024
+	}
+	return rLimit.Cur
+}
+
+func detectNetworkBufferLimit() int {
+	return 2048
 }
