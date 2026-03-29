@@ -6,4 +6,5 @@ type UserInput struct {
 	MaxConcurrency int
 	RetryCount     int
 	OutputFormat   string
+	SubnetPrefix   int
 }
